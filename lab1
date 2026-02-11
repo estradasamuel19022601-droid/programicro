@@ -1,0 +1,223 @@
+/*
+* NombreProgra.asm
+*
+* Creado: 06/02/2026
+* Autor : Samuel Estrada 
+* Descripción: sumador de 4 bits
+*/
+/**************/
+// Encabezado (Definición de Registros, Variables y Constantes)
+.include "M328PDEF.inc"     // Include definitions specific to ATMega328P
+.dseg
+.org    SRAM_START
+//variable_name:     .byte   1   // Memory alocation for variable_name:     .byte   (byte size)
+
+.cseg
+.org 0x0000
+ /**************/
+// Configuración de la pila
+LDI     R16, LOW(RAMEND)
+OUT     SPL, R16
+LDI     R16, HIGH(RAMEND)
+OUT     SPH, R16
+/**************/
+// Configuracion MCU
+
+
+
+SETUP:
+//Contador 1 --------------------------------------------------------
+//habilitar boton incremento
+CBI DDRC, DDC1
+SBI PORTC, PORTC1
+
+//DEcreciente
+CBI DDRC, DDC2
+SBI PORTC, PORTC2
+
+//Contador de 4 bits (verdes)
+// uso de leds 
+ SBI DDRB, DDB4
+ CBI PORTB, PORTB4
+ 
+ SBI DDRB, DDB3
+ CBI PORTB, PORTB3
+ 
+ SBI DDRB, DDB2
+ CBI PORTB, PORTB2
+ 
+ SBI DDRB, DDB1
+ CBI PORTB, PORTB1 
+
+//Contador 2 ---------------------------------------------------
+//habilitar boton incremento
+CBI DDRC, DDC3
+SBI PORTC, PORTC3
+
+//DEcreciente
+CBI DDRC, DDC4
+SBI PORTC, PORTC4
+
+//Contador de 4 bits (rojas)
+// uso de leds 
+ SBI DDRD, DDD7
+ CBI PORTD, PORTD7
+ 
+ SBI DDRD, DDD6
+ CBI PORTD, PORTD6
+ 
+ SBI DDRD, DDD5
+ CBI PORTD, PORTD5
+ 
+ SBI DDRD, DDD4
+ CBI PORTD, PORTD4
+
+//Resultado y led overflow ----------------------------------
+//habilitar boton para mostrar suma
+CBI DDRC, DDC5
+SBI PORTC, PORTC5
+
+//leds a utilizar
+ SBI DDRB, DDB5
+ CBI PORTB, PORTB5
+ 
+ SBI DDRB, DDB0
+ CBI PORTB, PORTB0
+ 
+ SBI DDRD, DDD3
+ CBI PORTD, PORTD3
+ 
+ SBI DDRD, DDD2
+ CBI PORTD, PORTD2
+
+ //led overflow
+ SBI DDRC, DDC0
+ CBI PORTC, PORTC0
+
+// Uso de variables para facilitar la escritura-------
+.def contador1 = r17
+.def contador2 = r18
+.def suma = r20
+.def resulcont = r21
+
+CLR contador1
+CLR contador2
+CLR suma
+clr resulcont
+
+/******/
+// Loop Infinito
+MAIN_LOOP:
+    //RJMP    MAIN_LOOP
+	SBIS PINC, 1              //SBIS se usar porque se tienen pull-ups 
+	CALL Creciente1
+	SBIS PINC, 2
+	CALL Decreciente1
+	//call Delay
+
+	SBIS PINC, 3
+	CALL Creciente2
+	SBIS PINC, 4
+	CALL Decreciente2
+	//call Delay
+
+	SBIS PINC, 5
+	CALL Sumar
+
+	//call resultadocontadores
+	//out PORTB, contador1
+	//out PORTD, contador2
+	rjmp MAIN_LOOP
+
+
+/******/
+// NON-Interrupt subroutines
+Creciente1:
+	// call delay
+	// volver a leer boton para ver si sigue presionado
+	//call delay
+	//SBIS PINC, 1
+	//ret 
+	inc contador1
+	andi contador1, 0x0F
+	rcall delay
+	ret
+
+Decreciente1:
+	dec contador1
+	andi contador1, 0x0F
+	rcall delay
+	ret 
+
+Creciente2:
+	inc contador2
+	andi contador2, 0x0F
+	rcall delay
+	ret
+
+Decreciente2:
+	dec contador2
+	andi contador2, 0x0F
+	rcall delay
+	ret
+
+Sumar:
+	mov suma, contador1
+	add suma, contador2
+	BRCC no_overflow
+	SBI PORTC, 0	// PC0 = 1 logico
+	rjmp resultado
+
+no_overflow:
+	CBI PORTC, 0	// PC0 = 0 logico
+
+//resultadocontadores:
+////Actualizar los pines para no afectar al eesultado
+//	mov resulcont, contador1
+//	swap resulcont
+//	andi resulcont, 0xF0
+//	lsr resulcont
+//	IN r24, PORTB
+//	andi r24, 0xE1      //no afecta los bits 0, 5, 6, 7
+//	or r24, resulcont
+//	out PORTB,r24
+//
+//	//contador 2
+//	mov resulcont, contador2
+//	swap resulcont
+//	andi resulcont, 0xF0 //No afecta los bits 0, 1, 2, 3
+//	in r24, PORTD
+//	andi r24, 0x0F
+//	or r24, resulcont
+//	out PORTD, r24
+//	ret
+
+resultado:
+	ANDI suma, 0x0F
+	//los datos se deben mostrar diferente porque estan en 2 puertos diferentes
+	CBI PORTB, 0	// PB0 = 0 logico
+	CBI PORTB, 5	// PB5 = 0 logico
+	CBI PORTD, 3	// PD3 = 0 logico
+	CBI PORTD, 2	// PD2 = 0 logico
+
+	SBRC suma, 0
+	SBI PORTB, 0
+	SBRC suma, 1   
+	SBI PORTB, 5
+	SBRC suma, 3
+	SBI PORTD, 3
+	SBRC suma, 2
+	SBI PORTD, 2
+
+	rcall Delay
+	ret
+
+/******/
+// Interrupt routines
+Delay:
+	LDI     R19, 255
+LOOP_DELAY:
+    DEC     R19
+    BRNE    LOOP_DELAY
+    RET
+/******/
