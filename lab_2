@@ -1,0 +1,247 @@
+/*
+* NombreProgra.asm
+*
+* Creado: 12/02/2026
+* Autor : Samuel Estrada 
+* Descripción: Botones t timer 0: Hacer que el contador aumente cada 100ms 
+*/
+/**************/
+// Encabezado (Definición de Registros, Variables y Constantes)
+.include "M328PDEF.inc"     // Include definitions specific to ATMega328P
+.dseg
+.org    SRAM_START
+//variable_name:     .byte   1   // Memory alocation for variable_name:     .byte   (byte size)
+
+.cseg
+.org 0x0000
+ /**************/
+// Configuración de la pila
+LDI     R16, LOW(RAMEND)
+OUT     SPL, R16
+LDI     R16, HIGH(RAMEND)
+OUT     SPH, R16
+/**************/
+// Configuracion MCU
+
+//Configuración leds para contador, uso de puerto B
+ldi r18, 0x0F
+out DDRB, r18
+
+//Configuracion del puerto D para el display
+ldi r18, 0xFE
+out DDRD, r18
+
+
+//    Configuracion de bits para el display, presentacion,    Anodo comun, enciende si estan en 0
+//        A  B  C  D  E  F  G
+//       D7 D6 D5 D4 D3 D2 C0  se cambio a D1 porque se deshabilito                     
+//   0 =  0  0  0  0  0  0  1  = 0x
+//   1 =  1  0  0  1  1  1  1
+//   2 =  0  0  1  0  0  1  0
+//   3 =  0  0  0  0  1  1  0
+//   4 =  1  0  0  1  1  0  0
+//   5 =  0  1  0  0  1  0  0
+//   6 =  0  1  0  0  0  0  0
+//   7 =  0  0  0  1  1  1  1
+//   8 =  0  0  0  0  0  0  0
+//   9 =  0  0  0  0  1  0  0
+//   A =  0  0  0  1  0  0  0
+//   B =  1  1  0  0  0  0  0
+//   C =  0  1  1  0  0  0  0
+//   D =  1  0  0  0  0  1  0
+//   E =  0  1  1  0  0  0  0
+//   F =  0  1  1  1  0  0  0
+
+
+//deshabilitar comunicacion serial
+ldi r19, 0x00
+STS UCSR0B, r19
+
+
+rjmp SETUP
+Segmentos:
+.db 0b00000010, 0b10011110 ; 0,1
+.db 0b00100100, 0b00001100 ; 2,3
+.db 0b10011000, 0b01001000 ; 4,5
+.db 0b01000000, 0b00011110 ; 6,7
+.db 0b00000000, 0b00001000 ; 8,9
+.db 0b00010000, 0b11000000 ; A,B
+.db 0b01100010, 0b10000100 ; C,D
+.db 0b01100000, 0b01110000 ; E,F
+
+
+
+SETUP:
+
+//deshabilitar comunicacion serial
+ldi r19, 0x00
+STS UCSR0B, r19
+
+//Contador --------------------------------------------------------
+//habilitar botones para los delays
+CBI DDRC, DDC1
+SBI PORTC, PORTC1
+
+CBI DDRC, DDC2
+SBI PORTC, PORTC2
+//-----------------------------------------------------
+//Salida para alarma
+sbi DDRC, DDC0
+cbi PORTC, PORTC0
+
+//Variables 
+.def cont = r17
+.def overflow = r21
+.def contador = r23
+.def general = r25
+.def seg_100ms = r18
+
+clr cont
+clr overflow
+clr contador
+clr general
+clr seg_100ms
+
+// configuracion del timer 0 
+ldi r20, 0x00
+OUT TCCR0A, r20  // Activar el modo normal del timer 0, opcion 0
+
+ldi r20, (1<<CS02)|(1<<CS00)  //sirve para activar el prescaler en 1024, tabla presentacion de clase
+out TCCR0B, r20
+
+rcall display
+/******/
+// Loop Infinito
+MAIN_LOOP:
+    
+	call activar_100ms
+	call boton_aumento
+	call boton_decremento
+	call Display
+	rjmp MAIN_LOOP
+
+
+/******/
+// NON-Interrupt subroutines
+
+
+Display:
+	ldi ZH, HIGH(Segmentos<<1)
+    ldi ZL, LOW(Segmentos<<1)
+
+   
+	MOV general, contador                // Usar registro temporal
+    ANDI general, 0x0F                   // Asegurar rango 0-15
+    
+	add ZL, general
+    CLR R0                           // Limpiar carry
+ //   ADD ZL, R25
+    ADC ZH, R0
+
+	lpm general, Z
+	out PORTD, general
+	ret
+ //-------------------------------------   
+
+ boton_aumento:
+	sbis pinc, 1
+	rjmp b1_presionado
+	ret
+
+b1_presionado:
+	rcall delay
+	sbis pinc, 1
+	rjmp b1_confirmado
+	ret
+
+b1_confirmado:
+	inc contador
+	andi contador, 0x0F
+	rcall display
+
+esperarsoltarb1:
+	sbis pinc, 1
+	rjmp esperarsoltarb1
+	rcall delay
+	ret
+
+boton_decremento:
+	sbis pinc, 2
+	rjmp b2_presionado
+	ret
+
+b2_presionado:
+	rcall delay
+	sbis pinc, 2
+	rjmp b2_confirmado
+	ret
+
+b2_confirmado:
+	tst contador 
+	brne restar
+	ldi contador, 0x0F
+	rcall display
+	rjmp esperarsoltarb2
+restar:
+	dec contador
+	rcall display
+
+
+esperarsoltarb2:
+	sbis pinc, 2
+	rjmp esperarsoltarb2
+	rcall delay
+	ret
+
+/******/
+// Interrupt routines
+
+
+
+activar_100ms:
+	ldi overflow, 6   //excel del cantidad de overflows para llegar a 100ms
+
+esperar_overflow:
+	sbis TIFR0, TOV0       //si TOV0 esta en 1 se salta el rjmp
+	RJMP esperar_overflow   //regresa hasta que sbis lo salta
+	sbi TIFR0, TOV0      //sirve para limpiar la bandera, se limpia con 1, no se puede usar cbi
+	dec overflow      
+	brne esperar_overflow    // hasta que overflow no sea 0, repite la instruccion
+	//ret
+	inc seg_100ms
+	cpi seg_100ms, 10
+	brne fin100ms
+
+	clr seg_100ms
+
+	inc cont
+	andi cont, 0x0F
+	out PORTB, cont
+	
+	rcall Comparar 
+
+fin100ms:
+	ret
+
+Comparar:
+	cp cont, contador
+	brne fin100ms
+
+	clr cont
+	out portb, cont
+
+	in general, PORTC
+	ldi r28, (1<<PORTC0)
+	eor general, r28
+	out PORTC, general
+	ret
+	
+	
+
+Delay:
+	LDI     R19, 255
+LOOP_DELAY:
+    DEC     R19
+    BRNE    LOOP_DELAY
+    RET
+/******/
