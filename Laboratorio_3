@@ -1,0 +1,251 @@
+/*
+* NombreProgra.asm
+*
+* Creado: Programación de microcontroladores
+* Autor : Samuel Estrada   24381
+* Descripción: Uso de interrupciones, uso de botones, displays y leds
+*/
+/****************************************/
+// Encabezado (Definición de Registros, Variables y Constantes)
+.include "M328PDEF.inc"     // Include definitions specific to ATMega328P
+.dseg
+.org    SRAM_START
+//variable_name:     .byte   1   // Memory alocation for variable_name:     .byte   (byte size)
+cnt_ovf: .byte 1
+
+.cseg
+.org 0x0000
+rjmp RESET
+.org PCI1addr
+rjmp PCINT_ISR
+.org OVF0addr
+rjmp TMR0_ISR
+
+RESET:
+ /****************************************/
+// Configuración de la pila
+LDI     R16, LOW(RAMEND)
+OUT     SPL, R16
+LDI     R16, HIGH(RAMEND)
+OUT     SPH, R16
+/****************************************/
+
+//Uso de variables para facilitar el problema
+.def general = r17
+.def contador = r18
+.def estado_anterior = r19
+.def contador_unidades = r24
+.def contador_decenas = r23
+.def contador_overflow = r21
+
+
+//Limpieza de variables
+clr general
+clr contador
+clr estado_anterior
+clr contador_unidades
+clr contador_overflow
+clr contador_decenas
+
+
+// Configuracion MCU
+SETUP:
+
+//Configuración de las leds para los leds: se agregara PB4 y PB5 para postlab
+ldi general, 0x3F  // 0x0F leds, 0x30 pines para el postlab
+out DDRB, general
+
+
+//Configuración de botones para leds con pull-ups
+cbi DDRC, PC1
+cbi DDRC, PC2
+sbi PORTC, PC1
+sbi PORTC, PC2
+
+//Habilitar el puerto D completo, quitar comunicación serial
+ldi general, 0x00
+sts UCSR0B, general
+
+// Puerto D como salidas excepto el bit0 0b11111110 o 0xFE 
+ldi general, 0xFE
+out DDRD, general
+
+//Hablitar el timer 0 
+ldi general, (1<<CS02)|(1<<CS00) //Configuracion para el precaler de 1024
+OUT TCCR0B, general
+
+ldi general, 100  //Para empezar en 100 a 255
+out TCNT0, general
+
+ldi general, (1<<TOIE0)
+sts TIMSK0, general
+
+//Habilitar el PCINT para las interrupciones 
+ldi general, (1<<PCIE1)
+STS PCICR, general
+
+ldi general, (1<<PCINT9)|(1<<PCINT10) //interrupcion en pines 1 y 2
+STS PCMSK1, general
+
+in estado_anterior, PINC   //guarda el estado del pinC
+
+SEI 
+/****************************************/
+// Loop Infinito
+MAIN_LOOP:
+	//Parte del prelaboratorio, funcionamiento de las leds con botones
+	mov general, contador
+	andi general, 0x0F
+
+	in r16, PORTB
+	andi r16, 0b00110000
+	or r16, general
+	out PORTB, r16
+
+	//Parte del laboratorio funcionamiento del display con timer0 y postlab
+	//mostrar unidades
+	in r16, PORTB
+	andi r16, 0b00001111
+	ori r16, (1<<PB4)
+	out PORTB, r16
+	RCALL unidades
+	rcall delay
+
+	//mostrar decenas 
+	in r16, PORTB
+	andi r16, 0b00001111
+	ori r16, (1<<PB5)
+	out PORTB, r16
+	rcall decenas
+	rcall delay
+
+    RJMP    MAIN_LOOP
+
+/****************************************/
+// NON-Interrupt subroutines
+
+unidades:
+	ldi ZH, HIGH(TABLA<<1)
+	ldi ZL, LOW(TABLA<<1)
+
+	mov r22, contador_unidades
+
+	add ZL, r22
+	clr R20
+	adc ZH, R20
+
+	lpm r22, Z
+	out PORTD, r22
+	ret
+
+decenas:
+	ldi ZH, HIGH(TABLA<<1)
+	ldi ZL, LOW(TABLA<<1)
+
+	mov r22, contador_decenas
+
+	add ZL, r22
+	clr R20
+	adc ZH, R20
+
+	lpm r22, Z
+	out PORTD, r22
+	ret
+
+/****************************************/
+// Interrupt routines
+
+//Interrupción para botones ------------------------------------------------------------
+PCINT_ISR:
+push general    //movemos para guardar lo que hay en general
+in general, SREG   
+push general     //guardamos el estado del sreg
+push r20
+
+in general, PINC
+
+mov r20, general
+eor r20, estado_anterior
+and r20, estado_anterior
+
+//Boton de aumento 
+sbrc r20, PC1
+inc contador
+
+//Boton decremento 
+ sbrc r20, PC2
+ dec contador
+
+ andi contador, 0x0F
+ mov estado_anterior, general
+
+pop r20
+pop general
+out SREG, general
+pop general
+reti
+
+//-----------------------------------------------
+
+TMR0_ISR:
+    push general
+    in general, SREG
+    push general
+    push r26
+    push r27
+
+    ldi general, 100
+    out TCNT0, general
+
+    ; Leer contador_overflow desde SRAM
+    ldi r26, LOW(cnt_ovf)
+    ldi r27, HIGH(cnt_ovf)
+    ld general, X
+    inc general
+    st X, general
+    cpi general, 100
+    brne FIN_TMR0
+
+    ; Resetear y actualizar dígitos
+    clr general
+    st X, general
+
+    inc contador_unidades
+    cpi contador_unidades, 10
+    brne FIN_TMR0
+
+    clr contador_unidades
+    inc contador_decenas
+
+    cpi contador_decenas, 6
+    brne FIN_TMR0
+
+    clr contador_decenas
+
+FIN_TMR0:
+    pop r27
+    pop r26
+    pop general
+    out SREG, general
+    pop general
+    reti
+
+
+
+Delay:
+	ldi r16, 40
+	D1: ldi r25, 150
+	D2: dec r25
+	brne D2
+	dec r16
+	brne D1
+	ret
+/****************************************/
+
+
+TABLA:
+.db 0b00000010, 0b10011110 ; 0,1
+.db 0b00100100, 0b00001100 ; 2,3
+.db 0b10011000, 0b01001000 ; 4,5
+.db 0b01000000, 0b00011110 ; 6,7
+.db 0b00000000, 0b00001000 ; 8,9
