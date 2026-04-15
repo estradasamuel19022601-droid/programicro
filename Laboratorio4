@@ -8,70 +8,203 @@
 /****************************************/
 // Encabezado (Libraries)
 //Frecuencia
-#define F_CPU 16000000UL
+#define F_CPU 16000000UL 
 
-//Librerias 
-#include <avr/io.h>
-#include <util/delay.h>
+#include <avr/io.h>       //Registros AVR
+#include <avr/interrupt.h> //Interrupciones
+#include <stdint.h>       //Tipos enteros
 
 /****************************************/
-// Function prototypes
-uint8_t contador = 0;
+// Definición de pines
 
-uint8_t debounce(volatile uint8_t *puerto, uint8_t bit);
-void init(void);
+#define MUX_DISP_HI   PB0    //Enable display alto
+#define MUX_DISP_LO   PB1    //Enable display bajo
+#define MUX_LEDS      PB2    //Enable LEDs
+#define PIN_ALARMA    PB3    //LED alarma
+
+#define BTN_INC       PC4    //Botón incremento
+#define BTN_DEC       PC3    //Botón decremento
+#define ADC_CH        2      //Canal ADC A2
+
+#define EN_DISP_HI    (1 << MUX_DISP_HI) //Máscara display alto
+#define EN_DISP_LO    (1 << MUX_DISP_LO) //Máscara display bajo
+#define EN_LEDS       (1 << MUX_LEDS)    //Máscara LEDs
+
 /****************************************/
-// Main Function
+// Tabla 7 segmentos
+
+static const uint8_t seg7[16] = {
+	0b0000001, 0b1001111, 0b0010010, 0b0000110,
+	0b1001100, 0b0100100, 0b0100000, 0b0001111,
+	0b0000000, 0b0000100, 0b0001000, 0b1100000,
+	0b0110001, 0b1000010, 0b0110000, 0b0111000
+}; //Tabla hex a display
+
+/****************************************/
+// Variables globales
+
+volatile uint8_t contador = 0;     //Valor contador
+volatile uint8_t adc_valor = 0;    //Valor ADC 8 bits
+volatile uint8_t mux_estado = 0;   //Estado MUX
+
+volatile uint8_t btn_inc_flag = 0; //Flag incremento
+volatile uint8_t btn_dec_flag = 0; //Flag decremento
+volatile uint8_t debounce_inc = 0; //Antirebote inc
+volatile uint8_t debounce_dec = 0; //Antirebote dec
+
+#define DEBOUNCE_CYCLES 10 //Tiempo rebote
+
+/****************************************/
+// Funciones auxiliares
+
+static inline void portd_escribir_seg(uint8_t patron)
+{
+	PORTD = (patron << 1); //Salida a display
+}
+
+static inline void portd_escribir_leds(uint8_t valor)
+{
+	PORTD = valor; //Salida a LEDs
+}
+
+/****************************************/
+// Inicialización
+
+void init(void)
+{
+	UCSR0B = 0x00; //Desactivar UART
+
+	DDRD = 0xFF;   //PORTD salida
+	PORTD = 0xFF;  //Apagar segmentos
+
+	DDRB = (1<<MUX_DISP_HI)|(1<<MUX_DISP_LO)|(1<<MUX_LEDS)|(1<<PIN_ALARMA); //PB salidas
+	PORTB = (1<<MUX_DISP_HI)|(1<<MUX_DISP_LO); //Displays apagados
+
+	DDRC &= ~((1<<BTN_INC)|(1<<BTN_DEC)); //Botones entrada
+	PORTC |= (1<<BTN_INC)|(1<<BTN_DEC);   //Pull-up botones
+
+	DDRC &= ~(1<<PC2); //ADC entrada
+	PORTC &= ~(1<<PC2); //Sin pull-up ADC
+}
+
+/****************************************/
+void init_timer1(void)
+{
+	TCCR1A = 0; //Modo CTC
+	TCCR1B = (1<<WGM12)|(1<<CS11)|(1<<CS10); //Prescaler 64
+	OCR1A = 416; //Frecuencia MUX ~600Hz
+	TIMSK1 = (1<<OCIE1A); //Habilitar interrupción
+}
+
+/****************************************/
+void init_adc(void)
+{
+	ADMUX = (1<<REFS0)|(1<<ADLAR)|(ADC_CH & 0x07); //Referencia AVcc + ADLAR
+
+	ADCSRA = (1<<ADEN)|(1<<ADSC)|(1<<ADIE)| //ADC enable + start + interrupt
+	(1<<ADPS2)|(1<<ADPS1)|(1<<ADPS0); //Prescaler 128
+
+	DIDR0 |= (1<<ADC2D); //Deshabilitar digital ADC
+}
+
+/****************************************/
+void init_pcint(void)
+{
+	PCICR |= (1<<PCIE1); //Habilitar PCINT grupo C
+	PCMSK1 |= (1<<PCINT11)|(1<<PCINT12); //Botones PC3 PC4
+}
+
+/****************************************/
+// Main
+
 int main(void)
 {
-	init();
-	
+	init();         //Inicializar puertos
+	init_adc();     //Inicializar ADC
+	init_timer1();  //Inicializar timer
+	init_pcint();   //Inicializar botones
+
+	sei();          //Activar interrupciones
+
 	while (1)
 	{
-		//boton incremento 
-		if(debounce(&PINC, PC4)){
-			contador++;
-			while(!(PINC &(1<<PC4)));
-		}
-		if(debounce(&PINC, PC3)){
-			contador--;
-			while(!(PINC & (1<<PC3)));
-		}
-		
-		//Para mostrar las leds se usara el puerto B y C
-		//bits de 0-5 para los pines del puerto B
-		PORTB = (PORTB & 0xC0)|(contador & 0x3F);
-		
-		//bits 6-7 para pines del puerto C
-		PORTC = (PORTC & 0xFC) | ((contador >> 6)& 0x03);
+		//Sistema por interrupciones
 	}
-		
-}
-/****************************************/
-// NON-Interrupt subroutines
-void init(void){
-	//Activar los bits 0-5 como salidas para leds del puerto B (PB0-PB5)
-	DDRB |= 0x3F;
-	
-	//Activarf los bits 6-7 como salidas para el puerto C (PC0 y PC1)
-	DDRC |= (1<<PC0)|(1<<PC1); 
-	
-	//Activar PC3 y PC4 como entrada para los botones y PC5 para leer el potenciometro
-	DDRC &= ~((1<<PC4)|(1<<PC3)|(1<<PC5));
-	
-	//activar pull-up en los pines de los botones
-	PORTC |= (1<<PC3)|(1<<PC4);
-	
 }
 
-uint8_t debounce(volatile uint8_t *puerto, uint8_t bit){
-	if (!(*puerto & (1<<bit)))
+/****************************************/
+// Interrupciones
+
+ISR(ADC_vect)
+{
+	adc_valor = ADCH; //Leer ADC
+	ADCSRA |= (1<<ADSC); //Nueva conversión
+}
+
+ISR(PCINT1_vect)
+{
+	if (!(PINC & (1<<BTN_INC)) && debounce_inc == 0) //Leer botón inc
 	{
-		_delay_ms(20);
-		if (!(*puerto & (1<<bit)))
-		{
-			return 1;
-		}
+		btn_inc_flag = 1; //Flag inc
+		debounce_inc = DEBOUNCE_CYCLES; //Iniciar debounce
 	}
-	return 0;
+
+	if (!(PINC & (1<<BTN_DEC)) && debounce_dec == 0) //Leer botón dec
+	{
+		btn_dec_flag = 1; //Flag dec
+		debounce_dec = DEBOUNCE_CYCLES; //Iniciar debounce
+	}
+}
+
+ISR(TIMER1_COMPA_vect)
+{
+	uint8_t adc_byte = adc_valor; //Valor ADC
+	uint8_t nibble;               //Nibble hex
+
+	PORTB |= (EN_DISP_HI | EN_DISP_LO); //Apagar displays
+	PORTB &= ~(EN_LEDS);               //Apagar LEDs
+	PORTD = 0xFF;                     //Apagar segmentos
+
+	switch (mux_estado)
+	{
+		case 0:
+		nibble = (adc_byte >> 4) & 0x0F; //Nibble alto
+		portd_escribir_seg(seg7[nibble]); //Mostrar display
+		PORTB &= ~(EN_DISP_HI); //Encender display alto
+		break;
+
+		case 1:
+		nibble = adc_byte & 0x0F; //Nibble bajo
+		portd_escribir_seg(seg7[nibble]); //Mostrar display
+		PORTB &= ~(EN_DISP_LO); //Encender display bajo
+		break;
+
+		case 2:
+		portd_escribir_leds(contador); //Mostrar LEDs
+		PORTB |= EN_LEDS; //Encender LEDs
+		break;
+	}
+
+	mux_estado++; //Siguiente estado
+	if (mux_estado >= 3) mux_estado = 0; //Reset MUX
+
+	if (debounce_inc > 0) debounce_inc--; //Reducir debounce inc
+	if (debounce_dec > 0) debounce_dec--; //Reducir debounce dec
+
+	if (btn_inc_flag && debounce_inc == 0)
+	{
+		if (!(PINC & (1<<BTN_INC))) contador++; //Incrementar
+		btn_inc_flag = 0; //Reset flag
+	}
+
+	if (btn_dec_flag && debounce_dec == 0)
+	{
+		if (!(PINC & (1<<BTN_DEC))) contador--; //Decrementar
+		btn_dec_flag = 0; //Reset flag
+	}
+
+	if (adc_byte > contador) //Comparación
+	PORTB |= (1<<PIN_ALARMA); //Encender alarma
+	else
+	PORTB &= ~(1<<PIN_ALARMA); //Apagar alarma
 }
