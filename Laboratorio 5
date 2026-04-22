@@ -1,0 +1,44 @@
+/*
+ * Laboratorio5.c
+ *
+ * Created: 17/04/2026 09:17:08
+ * Author:  Samuel Estrada
+ * Description: Potenciometros, servos, PWM y librerias
+ */
+/****************************************/
+// Encabezado (Libraries)
+//Frecuencia 
+#define F_CPU 16000000UL
+
+//Librerias
+#include <avr/io.h>
+#include <avr/interrupt.h>
+#include "pwm_lib.h"
+#include "adc_lib.h"
+
+/****************************************/
+// Function prototypes
+
+/****************************************/
+// Main Function
+int main(void){
+	
+	PWM1_init();
+	
+	PWM2_init();
+	
+	PWM_LED_init();
+	
+	ADC_init();
+	
+	while(1){
+		
+	}
+	return 0;
+}
+
+/****************************************/
+// NON-Interrupt subroutines
+
+/****************************************/
+// Interrupt routines
